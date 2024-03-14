@@ -1,0 +1,52 @@
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+f.Intrinsic.Control.Try
+'BN, Nov 2019
+'This program will delete the WIP BIN Seq when the Job Seq is closed
+	v.Local.sError.Declare
+	v.Local.sSQL.Declare
+	v.Local.sRet.Declare
+	v.Local.sJobList.Declare
+	v.Local.bTable.Declare
+	
+	f.ODBC.Connection!conx.OpenCompanyConnection
+	
+	'Check table
+	F.ODBC.Connection!conx.TableExists("GCG_5694_WIP_BIN_bkp",V.Local.bTable)
+	F.Intrinsic.Control.If(v.Local.bTable.Not)
+		F.ODBC.Connection!Conx.Execute("CREATE TABLE GCG_5694_WIP_BIN_bkp  ( JOB CHAR(6), SUFFIX CHAR(3), SEQUENCE CHAR(6), PART CHAR(20), LOCATION CHAR(2), BIN CHAR(6), DESCRIPTION CHAR(30), QTY_BIN NUMERIC(12,4), DATE_WIPBIN CHAR(8), BIN_USER CHAR(8), FILLER CHAR(42), DateTimeBkp DateTime)")
+		F.ODBC.Connection!Conx.Execute("CREATE INDEX GCG_596400  ON GCG_5694_WIP_BIN_bkp ( JOB, SUFFIX, SEQUENCE )")
+		F.ODBC.Connection!Conx.Execute("CREATE INDEX GCG_596401 ON GCG_5694_WIP_BIN_bkp ( PART, LOCATION )")
+		F.ODBC.Connection!Conx.Execute("CREATE INDEX GCG_596402 ON GCG_5694_WIP_BIN_bkp ( DateTimeBkp )")
+	F.Intrinsic.Control.EndIf	
+	'Back up
+	f.ODBC.Connection!conx.Execute("Insert into GCG_5694_WIP_BIN_bkp (Select  JOB,SUFFIX,SEQUENCE,PART,LOCATION,BIN,DESCRIPTION,QTY_BIN,DATE_WIPBIN,BIN_USER,FILLER,Now() from Wip_Bin where (Job + '-' + Suffix) not in (select Job + '-' + Suffix from v_job_header where Date_Closed = '1900-01-01'))")
+	f.ODBC.Connection!conx.Execute("Delete from WIP_BIN where (Job + '-' + Suffix) not in (select Job + '-' + Suffix from v_job_header where Date_Closed = '1900-01-01')")
+	f.Intrinsic.Control.CallSub("Unload")
+
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Unload.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+
+	F.Intrinsic.Control.If(V.ODBC.conx.State,=,1)
+		F.ODBC.Connection!conx.close
+	F.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Subroutine called from:{6}{1}Error Occurred: {3}{1}Description: {4}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,v.Ambient.SubroutineCalledFrom,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End	
+F.Intrinsic.Control.EndTry
+Program.Sub.Unload.End
