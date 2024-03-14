@@ -1,0 +1,536 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("Assign WIP BIN")
+Gui.Form..Size(13800,10425)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form..Event(UnLoad,Form_UnLoad)
+Gui.Form.gsMat.Create(GsGridControl)
+Gui.Form.gsMat.Size(13455,9600)
+Gui.Form.gsMat.Position(105,120)
+Gui.Form.gsMat.Event(RowCellClick,gsMat_RowCellClick)
+Gui.Form.gsMat.Event(CellValueChanged,gsMat_CellValueChanged)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+v.Global.sMainLocation.Declare
+v.Global.sJob.Declare
+v.Global.sSuffix.Declare
+f.Intrinsic.Control.CallSub("Check_And_Create_Custom_Folder")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'BN, Sept 24, 2019
+'This project will assign the Destination Bin for the child component after issuing that child component into the parent WO.
+'That way, later we can see what Bin the children are located at after being issued to the parent WO.
+'At Issue Material screen, there are pre-save and post-save hook: 28840 and 28842.
+'However pre-save 28840 hook has passed data while the post save 28842 does not.
+'The custom Bin assigned should be validated only if the core successfully saved (that means 28842 is reached).
+'If the core does not save successfully (pre-save 28840 is reached, but post-save 28842 is not reached), an Asynchronous script will delete the staging data populated by the pre-save 28840.
+'The Asynchronous program will wait maximum 3 seconds before deleting
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare	
+	v.Local.sSQL.Declare
+	v.Local.iCnt.Declare
+	v.Local.sPart.Declare
+	v.Local.sRet.Declare	
+	
+	F.Intrinsic.Control.SelectCase(v.Caller.Hook)
+		F.Intrinsic.Control.Case(15936)
+			v.Global.sJob.Set(v.Passed.009990)
+			v.Global.sSuffix.Set(v.Passed.009991)			
+			f.ODBC.Connection!conx.OpenCompanyConnection(300)
+				f.Intrinsic.Control.CallSub("Process_GUI")
+			f.Intrinsic.Control.CallSub("Unload")	
+			
+		F.Intrinsic.Control.Case(28840)
+			'Shop Floor Control > Transactions > Issue Material
+			v.Passed.Global.Set("")
+			v.Global.sJob.Set(v.Passed.000002)
+			v.Global.sSuffix.Set(v.Passed.000003)
+			f.ODBC.Connection!conx.OpenCompanyConnection(300)
+			f.Intrinsic.Control.CallSub("Process_Bin_Assign")
+			
+		F.Intrinsic.Control.Case(28842)
+			'Get data from staging table and save to core WIP_BIN table		
+			f.Intrinsic.Control.If(v.Passed.Global.Trim,<>,"")
+				f.ODBC.Connection!conx.OpenCompanyConnection(300)
+				f.Intrinsic.String.Build("Select Job,Suffix,Sequence,Part,Loc,Bin,Qty_Apply,TimeStamp,UserID from GCG_5694_Stages where TimeStamp = '{0}' and UserID = '{1}'",v.Passed.Global,v.Caller.User,v.Local.sSQL)
+				f.Data.DataTable.CreateFromSQL("Move","conx",v.Local.sSQL,True)
+				f.Intrinsic.Control.For(v.Local.iCnt,0,v.DataTable.Move.RowCount--,1)
+					v.Local.sPart.Set(v.DataTable.Move(v.Local.iCnt).Part!FieldValString)
+					f.Intrinsic.String.Build("Select * from WIP_Bin where Job = '{0}' and Suffix = '{1}' and Sequence = '{2}' and Part = '{3}' and Location = '{4}' and Bin = '{5}'",v.DataTable.Move(v.Local.iCnt).Job!FieldValString,v.DataTable.Move(v.Local.iCnt).Suffix!FieldValString,v.DataTable.Move(v.Local.iCnt).Sequence!FieldValString,v.Local.sPart.PSQLFriendly,v.DataTable.Move(v.Local.iCnt).Loc!FieldValString,v.DataTable.Move(v.Local.iCnt).Bin!FieldValString,v.Local.sSQL)
+					f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+					f.Intrinsic.Control.If(v.Local.sRet.Trim,=,"")
+						f.Intrinsic.String.Build("Insert into WIP_Bin (Job,Suffix,Sequence,Part,Location,Bin,Description,Qty_Bin,Date_WipBin,Bin_User) values ('{0}','{1}','{2}','{3}','{4}','{5}','{6}','{7}','{8}','{9}')",v.DataTable.Move(v.Local.iCnt).Job!FieldValString,v.DataTable.Move(v.Local.iCnt).Suffix!FieldValString,v.DataTable.Move(v.Local.iCnt).Sequence!FieldValString,v.Local.sPart.PSQLFriendly,v.DataTable.Move(v.Local.iCnt).Loc!FieldValString,v.DataTable.Move(v.Local.iCnt).Bin!FieldValString,"Assigned at Issue Material",v.DataTable.Move(v.Local.iCnt).Qty_Apply!FieldValString,v.Ambient.Date.FormatYYYYMMDD,v.Caller.User,v.Local.sSQL)
+					f.Intrinsic.Control.Else
+						f.Intrinsic.String.Build("Update WIP_Bin set Qty_Bin = Qty_Bin + {6},Bin_User = '{7}',Description = 'Assigned at Issue Material' where Job = '{0}' and Suffix = '{1}' and Sequence = '{2}' and Part = '{3}' and Location = '{4}' and Bin = '{5}'",v.DataTable.Move(v.Local.iCnt).Job!FieldValString,v.DataTable.Move(v.Local.iCnt).Suffix!FieldValString,v.DataTable.Move(v.Local.iCnt).Sequence!FieldValString,v.Local.sPart.PSQLFriendly,v.DataTable.Move(v.Local.iCnt).Loc!FieldValString,v.DataTable.Move(v.Local.iCnt).Bin!FieldValString,v.DataTable.Move(v.Local.iCnt).Qty_Apply!FieldValString,v.Caller.User,v.Local.sSQL)
+					f.Intrinsic.Control.EndIf
+					f.ODBC.Connection!conx.Execute(v.Local.sSQL)
+					'Delete Staging Record
+					f.Intrinsic.String.Build("Delete from GCG_5694_Stages where Job = '{0}' and Suffix = '{1}' and Sequence = '{2}' and Part = '{3}' and Loc = '{4}' and Bin = '{5}' and TimeStamp = '{6}' and UserID = '{7}'",v.DataTable.Move(v.Local.iCnt).Job!FieldValString,v.DataTable.Move(v.Local.iCnt).Suffix!FieldValString,v.DataTable.Move(v.Local.iCnt).Sequence!FieldValString,v.Local.sPart.PSQLFriendly,v.DataTable.Move(v.Local.iCnt).Loc!FieldValString,v.DataTable.Move(v.Local.iCnt).Bin!FieldValString,v.Passed.Global,v.Caller.User,v.Local.sSQL)
+					f.ODBC.Connection!conx.Execute(v.Local.sSQL)
+				f.Intrinsic.Control.Next(v.Local.iCnt)
+			
+			f.Intrinsic.Control.EndIf
+			v.Passed.Global.Set("")
+			f.Intrinsic.Control.CallSub("Unload")
+			
+	F.Intrinsic.Control.EndSelect	
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.Unload.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+
+	F.Intrinsic.Control.If(V.ODBC.conx.State,=,1)
+		F.ODBC.Connection!conx.close
+	F.Intrinsic.Control.EndIf
+	
+	f.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Subroutine called from:{6}{1}Error Occurred: {3}{1}Description: {4}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,v.Ambient.SubroutineCalledFrom,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End	
+F.Intrinsic.Control.EndTry
+Program.Sub.Unload.End
+
+'OK button will 
+'1/save data to staging table 
+'2/call Async program
+'3/unload
+'4/let the core move to post-Save hook
+Program.Sub.Process_Bin_Assign.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	V.Local.iRow.Declare
+	V.Local.iC.Declare
+	V.Local.sReadRow.Declare
+	v.Local.sRet.Declare
+	v.Local.sSQL.Declare	
+	v.Local.sLine.Declare
+	v.local.sPart.Declare
+	v.local.sRev.Declare
+	v.local.sLoc.Declare
+	v.local.sDescription.Declare	
+	v.local.sBin.Declare
+	v.local.fQty_Apply.Declare
+	v.local.sClosed.Declare	
+	v.local.sSequence.Declare
+	v.Local.sBinRange.Declare
+	v.Local.sCaption.Declare
+	
+	'Scan AUX for apply qty and parts
+	f.Intrinsic.Control.If(v.DataTable.Stages.Exists)
+		f.Data.DataTable.Close("Stages")
+	f.Intrinsic.Control.EndIf
+	f.Data.DataTable.CreateFromString("Stages","","Line*!*Part*!*Loc*!*Description*!*Sequence*!*Bin*!*Brw*!*Qty_Apply*!*TimeStamp*!*UserID","String*!*String*!*String*!*String*!*String*!*String*!*String*!*Float*!*String*!*String","*!*","#$#",True)
+	f.Data.DataTable.DeleteRow("Stages",0)
+	f.Data.DataTable.AcceptChanges("Stages")
+	
+	F.Intrinsic.BDF.Load("AUX001","AUX001")
+	F.Intrinsic.BDF.Clone("AUX001","Clone")
+	F.Intrinsic.BDF.ReadRowCount("AUX001",V.Local.iRow)
+	F.Intrinsic.Math.Sub(V.Local.iRow,1,V.Local.iRow)
+	F.Intrinsic.Control.For(V.Local.iC,0,V.Local.iRow,1)	
+		'Read row and check for apply qty
+		F.Intrinsic.BDF.ReadRow("AUX001",V.Local.iC,V.Local.sReadRow)
+		F.Intrinsic.String.Split(V.Local.sReadRow,"|~|",V.Local.sReadRow)	
+		v.Local.fQty_Apply.Set(v.Local.sReadRow(10).Trim)
+		f.Intrinsic.Control.if(v.Local.fQty_Apply,<>,0)
+			v.Local.sLine.Set(v.local.sReadRow(0).Trim)
+			v.local.sPart.Set(v.local.sReadRow(1).Trim)
+			v.local.sRev.Set(v.local.sReadRow(2).Trim)
+			f.Intrinsic.String.GSSPartString(v.Local.sPart,v.Local.sRev,v.Local.sPart)
+			v.local.sLoc.Set(v.local.sReadRow(3).Trim)
+			v.local.sDescription.Set(v.local.sReadRow(4).Trim)
+			v.local.sSequence.Set(v.local.sReadRow(5).Trim)
+			v.local.sBin.Set(v.local.sReadRow(6).Trim)
+			v.local.fQty_Apply.Set(v.local.sReadRow(10).Trim)
+		
+		f.Data.DataTable.AddRow("Stages","Line",v.Local.sLine,"Part",v.Local.sPart,"Loc",v.Local.sLoc,"Description",v.Local.sDescription,"Sequence",v.Local.sSequence,"Qty_Apply",v.Local.fQty_Apply)	
+		f.Intrinsic.Control.EndIf	
+	F.Intrinsic.Control.Next(V.Local.iC)
+	
+	'Stop when there is no qty applied
+	f.Intrinsic.Control.If(v.DataTable.Stages.RowCount,=,0)
+		f.Intrinsic.Control.CallSub("Unload")
+	f.Intrinsic.Control.EndIf
+	
+	'Process Stages
+	f.Data.DataTable.AddColumn("Stages","Job","String",v.Global.sJob)
+	f.Data.DataTable.AddColumn("Stages","Suffix","String",v.Global.sSuffix)
+	f.Data.DataTable.AddColumn("Stages","Qty_Bin","float",0)
+	f.Data.DataTable.AddExpressionColumn("Stages","Qty_New","float","[Qty_Bin] + [Qty_Apply]")
+	f.Data.DataTable.AddExpressionColumn("Stages","JSSPartLoc","String","[Job] + [Suffix] + trim([Sequence]) + trim([Part]) + trim([Loc])")
+	f.Data.DataTable.AddExpressionColumn("Stages","BinPartLoc","String","[Bin] + trim([Part]) + trim([Loc])")
+	
+	'BinDict
+	f.Data.Dictionary.CreateFromSQL("BinDict","conx","Select Job + Suffix + Sequence + rtrim(Part) + rtrim(Location) as JSSPartLoc,BIN FROM WIP_Bin")
+	f.Data.Dictionary.SetDefaultReturn("BinDict","")
+	f.Data.DataTable.FillFromDictionary("Stages","BinDict","JSSPartLoc","Bin")	
+	'QtyBinDict
+	f.Data.Dictionary.CreateFromSQL("QtyBinDict","conx","Select Bin + rtrim(Part) + rtrim(Location) as BinPartLoc,sum(Qty_Bin) FROM WIP_Bin group by Part,location,Bin")
+	f.Data.Dictionary.SetDefaultReturn("QtyBinDict",0)
+	f.Data.DataTable.FillFromDictionary("Stages","QtyBinDict","BinPartLoc","Qty_Bin")
+
+	'BinRange
+	f.Intrinsic.String.Build("Select Location from V_Job_Header where Job = '{0}' and Suffix = '{1}'",v.Global.sJob,v.Global.sSuffix,v.Local.sSQL)
+	f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Global.sMainLocation)
+	f.Intrinsic.String.Build("Select b.Bin from V_Bin_Master b left join V_WIP_BIN w on b.Bin = w.Bin where w.Job = '{0}' and w.Suffix = '{1}' and b.Location = '{2}' and b.Staging_Bin = 'B' Order by b.Bin",v.Global.sJob,v.Global.sSuffix,v.Global.sMainLocation,v.Local.sSQL)
+	f.Data.DataTable.CreateFromSQL("BinRange","conx",v.Local.sSQL,True)
+	f.Data.DataView.Create("BinRange","dvBinRange")
+	f.Data.DataView.ToString("BinRange","dvBinRange","Bin","","*!*",v.Local.sBinRange)	
+	
+	'Move to grid
+	gui.Form.gsMat.AddGridviewFromDatatable("gvMat","Stages")
+	f.Intrinsic.Control.CallSub("Format_gsMat")
+	Gui.Form.gsMat.ColumnEdit("gvMat","Bin","Combobox",v.Local.sBinRange)
+	gui.Form.gsMat.MainView("gvMat")
+	f.Intrinsic.String.Build("Assign WIP BIN for Job: {0}-{1}",v.Global.sJob,v.Global.sSuffix,v.Local.sCaption)
+	gui.Form..Caption(v.Local.sCaption)
+	
+	gui.Form..Show	
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.Process_Bin_Assign.End
+
+Program.Sub.Format_gsMat.Start
+f.Intrinsic.Control.Try	
+	v.Local.sError.Declare
+
+	v.Local.sAllColumns.Declare
+	v.Local.sAllignmentCenter.Declare
+	v.Local.sAllignmentFar.Declare
+	
+	gui.Form.gsMat.SuspendLayout()
+	'General format for the grid
+	Gui.Form.gsMat.SetGridViewProperty("gvMat","AllowSort",True)
+	Gui.Form.gsMat.SetGridViewProperty("gvMat","AllowFilter",True)
+	Gui.Form.gsMat.SetGridViewProperty("gvMat","OptionsViewShowAutoFilterRow",True)	
+	Gui.Form.gsMat.SetGridViewProperty("gvMat","EnableAppearanceOddRow",False)
+	Gui.Form.gsMat.SetGridViewProperty("gvMat","AllowColumnResizing",True)
+	Gui.Form.gsMat.SetGridViewProperty("gvMat","OptionsViewColumnAutoWidth",False)	
+	Gui.Form.gsMat.SetGridViewProperty("gvMat","ColumnPanelRowHeight","35")	
+	
+	v.Local.sAllColumns.Set("Job,Suffix,Sequence,JSSPartLoc,BinPartLoc,Line,Part,Loc,Description,Bin,Brw,Qty_Bin,Qty_Apply,Qty_New")
+	v.Local.sAllignmentCenter.Set("Sequence,Line,Loc,Bin,Brw")
+	v.Local.sAllignmentFar.Set("Qty_Bin,Qty_Apply,Qty_New")
+	'VisibleIndex	
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns",v.Local.sAllColumns,"sProperty","VisibleIndex")	
+	'InVisible	
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns","Job,Suffix,JSSPartLoc,BinPartLoc,TimeStamp,UserID","sProperty","Invisible")	
+	'HeaderWordWrap
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns",v.Local.sAllColumns,"sProperty","HeaderWordWrap")
+	'HeaderAllign_Top
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns",v.Local.sAllColumns,"sProperty","HeaderAllign_Top")
+	'HeaderBold
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns",v.Local.sAllColumns,"sProperty","HeaderFontBold")
+	'Header alignment center
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns",v.Local.sAllignmentCenter,"sProperty","HeaderAllign_Center")
+	'Header alignment far
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns",v.Local.sAllignmentFar,"sProperty","HeaderAllign_Far")
+	'CellHAlignment center
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns",v.Local.sAllignmentCenter,"sProperty","CellHAlignment_Center")
+	'CellHAlignment _ Far
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns",v.Local.sAllignmentFar,"sProperty","CellHAlignment_Far")
+	'Caption	
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns","Qty_Bin~Bin Qty,Qty_Apply~Assigned Qty,Qty_New~New Qty","sProperty","Caption")	
+	'Width	
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns","Line,Loc,Brw","sProperty","Width","sWidth","35")	
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns","Part","sProperty","Width","sWidth","160")
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns","Description","sProperty","Width","sWidth","220")
+	'For_RowCell_Click
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns","Brw","sProperty","For_RowCell_Click")	
+	'For_CellValue_Changed
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns","Bin","sProperty","For_CellValue_Changed")
+	'Decimal_1
+	f.Intrinsic.Control.CallSub(FormatBulk,"GS","gsMat","GV","gvMat","sInputColumns",v.Local.sAllignmentFar,"sProperty","Decimal_1")	
+	'Color
+	gui.Form.gsMat.SetColumnProperty("gvMat","Bin","CellBackColor","LightBlue")	
+	'Tool tip
+	Gui.Form.gsMat.SetColumnProperty("gvMat","Qty_Bin","ToolTip","Total of Parts for the Bin")
+	Gui.Form.gsMat.SetColumnProperty("gvMat","Qty_New","ToolTip","New Qty = Bin Qty + Assigned Qty")
+	'Browse
+	gui.Form.gsMat.SetColumnProperty("gvMat","Brw","Icon","^")
+	
+	gui.Form.gsMat.ResumeLayout()		
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.Format_gsMat.End
+
+Program.Sub.FormatBulk.Start
+f.Intrinsic.Control.Try
+	V.Local..BulkDeclareString(sError,sColumns,sHold)
+	v.Local..BulkDeclareLong(iCnt)
+
+	f.Intrinsic.String.Split(v.Args.sInputColumns,",",v.Local.sColumns)
+	f.Intrinsic.Control.For(v.Local.iCnt,0,v.Local.sColumns.UBound,1)
+		F.Intrinsic.Control.SelectCase(v.Args.sProperty)
+			F.Intrinsic.Control.Case("MinWidth")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"MinWidth",v.Args.sWidth)
+			F.Intrinsic.Control.Case("MaxWidth")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"MaxWidth",v.Args.sWidth)
+			F.Intrinsic.Control.Case("Width")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"Width",v.Args.sWidth)
+			F.Intrinsic.Control.Case("Invisible")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"Visible",False)
+			F.Intrinsic.Control.Case("VisibleIndex")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"VisibleIndex",v.Local.iCnt)
+			F.Intrinsic.Control.Case("Caption")
+				f.Intrinsic.String.Split(v.Local.sColumns(v.Local.iCnt),"~",v.Local.sHold)
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sHold(0),"Caption",v.Local.sHold(1))
+			F.Intrinsic.Control.Case("HeaderAllign_Far")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"HeaderHAlignment","Far")
+			F.Intrinsic.Control.Case("HeaderAllign_Center")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"HeaderHAlignment","Center")
+			F.Intrinsic.Control.Case("HeaderAllign_Top")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"HeaderVAlignment","Top")
+			F.Intrinsic.Control.Case("HeaderFontBold")	
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"HeaderFontBold",True)
+			F.Intrinsic.Control.Case("HeaderWordWrap")	
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"HeaderWordWrap","Wrap")
+			F.Intrinsic.Control.Case("CellHAlignment_Center")	
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"CellHAlignment","Center")
+			F.Intrinsic.Control.Case("CellHAlignment_Far")	
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"CellHAlignment","Far")
+			F.Intrinsic.Control.Case("Decimal_1")	
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"DisplayCustomNumeric","###,###,###,##0.00")
+			f.Intrinsic.Control.Case("For_CellValue_Changed")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"AllowEdit",True)	
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"ReadOnly",False)
+			f.Intrinsic.Control.Case("For_RowCell_Click")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"AllowEdit",False)	
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"ReadOnly",True)
+			f.Intrinsic.Control.Case("DisplayCustomDatetime")
+				gui.Form.[v.Args.GS].SetColumnProperty(v.Args.GV,v.Local.sColumns(v.Local.iCnt),"DisplayCustomDatetime","d")	
+			F.Intrinsic.Control.EndSelect		
+	f.Intrinsic.Control.Next(v.Local.iCnt)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Subroutine called from:{6}{1}Error Occurred: {3}{1}Description: {4}{1}GAB Version: {5} column: {7}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,v.Ambient.SubroutineCalledFrom,v.Local.sColumns(v.Local.iCnt),V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+
+Program.Sub.FormatBulk.End
+
+Program.Sub.gsMat_RowCellClick.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	V.Local.sSQL.Declare
+	v.Local.sRet.Declare
+	v.Local.fQtyBin.Declare
+	V.Local.sBin.Declare
+	v.Local.sPart.Declare
+	
+	f.Intrinsic.Control.If(v.Args.Column.UCase,=,"BRW")
+		F.Intrinsic.UI.SetBrowserHotTypeAhead(True)
+		f.Intrinsic.String.Build("Select b.Bin,b.Location,b.Bin_Description as Description,w.Job,w.Suffix,w.Sequence,w.Part,w.Location,w.Qty_Bin  FROM V_Bin_Master b left join V_WIP_BIN w on b.Bin = w.Bin where b.Location = '{0}' and b.Staging_Bin = 'B' ORDER BY b.Bin",v.Global.sMainLocation,v.Local.sSQL)
+		F.Intrinsic.UI.Browser("Select Bin","Conx",v.Local.sSQL,"Bin*!*Location*!*Description*!*Job*!*Suffix*!*Sequence*!*Part*!*Locn*!*Qty Bin","300*!*300*!*500*!*300*!*200*!*300*!*500*!*200*!*200",V.Local.sRet)
+		F.Intrinsic.Control.If(Variable.Local.sRet.IsCancel,=,False)
+			F.Intrinsic.String.Split(Variable.Local.sRet,"*!*",Variable.Local.sRet)
+			v.Local.sBin.Set(v.Local.sRet(0))
+			f.Data.DataTable.SetValue("Stages",v.Args.RowIndex,"Bin",v.Local.sBin)
+			v.Local.sPart.Set(v.DataTable.Stages(v.Args.RowIndex).Part!FieldValString)
+			f.Intrinsic.String.Build("Select Sum(Qty_Bin) from WIP_Bin where Part = '{0}' and Location = '{1}' and Bin = '{2}' Group by Part,location,Bin",v.Local.sPart.PSQLFriendly,v.Global.sMainLocation,v.Local.sBin,v.Local.sSQL)
+			f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+			v.Local.fQtyBin.Set(v.Local.sRet)
+			f.Data.DataTable.SetValue("Stages",v.Args.RowIndex,"Qty_Bin",v.Local.fQtyBin)	
+			gui.Form.gsMat.MainView("gvMat")			
+		F.Intrinsic.Control.EndIf		
+	f.Intrinsic.Control.EndIf
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Subroutine called from:{6}{1}Error Occurred: {3}{1}Description: {4}{1}GAB Version: {5} column: {7}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,v.Ambient.SubroutineCalledFrom,v.Local.sColumns(v.Local.iCnt),V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.gsMat_RowCellClick.End
+
+Program.Sub.Form_UnLoad.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	v.Local.iFlag.Declare
+	v.Local.sRet.Declare
+
+	Function.Intrinsic.UI.MsgBox ("Do you want to assign WIP BIN as displayed in the grid?", "Bin Assignment",3,v.Local.iFlag)
+	'Cancel button is hit
+	f.Intrinsic.Control.If(v.Local.iFlag,=,2)		
+		f.Intrinsic.Control.ExitSub	
+	'No button is hit. Close Form without doing anything
+	f.Intrinsic.Control.ElseIf(v.Local.iFlag,=,7)		
+		f.Intrinsic.Control.CallSub("Unload")	
+	'Yes button is clicked - Save Stages with time stamp to custom table and pass Global time stamp to post hook
+	f.Intrinsic.Control.ElseIf(v.Local.iFlag,=,6)
+		'Set Time Stamp with milisecond
+		f.ODBC.Connection!conx.ExecuteAndReturn("select Top 1 Convert(now(),SQL_Char) from v_Employee_mstr",v.Local.sRet)
+		f.Intrinsic.Control.If(v.Local.sRet.Trim,<>,"")
+			v.Passed.Global.Set(v.Local.sRet.Trim)
+		f.Intrinsic.Control.Else
+			v.Passed.Global.Set(v.Ambient.Now)
+		f.Intrinsic.Control.EndIf
+		f.Data.DataTable.SetValue("Stages",-1,"TimeStamp",v.Passed.Global,"UserID",v.Caller.User)
+		f.Data.DataTable.SaveToDB("Stages","conx","GCG_5694_Stages","",128,"Job@!@Job*!*Suffix@!@Suffix*!*Sequence@!@Sequence*!*Part@!@Part*!*Loc@!@Loc*!*Bin@!@Bin*!*Qty_Apply@!@Qty_Apply*!*TimeStamp@!@TimeStamp*!*UserID@!@UserID")
+		
+		f.Intrinsic.Control.CallSub("Unload")		
+		
+	f.Intrinsic.Control.EndIf
+		
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Subroutine called from:{6}{1}Error Occurred: {3}{1}Description: {4}{1}GAB Version: {5}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,v.Ambient.SubroutineCalledFrom,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End	
+F.Intrinsic.Control.EndTry
+
+Program.Sub.Form_UnLoad.End
+
+Program.Sub.gsMat_CellValueChanged.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	V.Local.sSQL.Declare
+	v.Local.sRet.Declare
+	v.Local.fQtyBin.Declare
+	v.Local.sPart.Declare
+	
+	f.Intrinsic.Control.If(v.Args.Column.UCase,=,"BIN")
+		v.Local.sPart.Set(v.DataTable.Stages(v.Args.RowIndex).Part!FieldValString)
+		f.Intrinsic.String.Build("Select Sum(Qty_Bin) from WIP_Bin where Part = '{0}' and Location = '{1}' and Bin = '{2}' Group by Part,location,Bin",v.Local.sPart.PSQLFriendly,v.Global.sMainLocation,v.DataTable.Stages(v.Args.RowIndex).Bin!FieldValString,v.Local.sSQL)
+		f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)
+		v.Local.fQtyBin.Set(v.Local.sRet)
+		f.Data.DataTable.SetValue("Stages",v.Args.RowIndex,"Qty_Bin",v.Local.fQtyBin)	
+		'f.Data.DataTable.AcceptChanges("Stages")
+		gui.Form.gsMat.MainView("gvMat")
+		
+	f.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Subroutine called from:{6}{1}Error Occurred: {3}{1}Description: {4}{1}GAB Version: {5} column: {7}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,v.Ambient.SubroutineCalledFrom,v.Local.sColumns(v.Local.iCnt),V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry
+Program.Sub.gsMat_CellValueChanged.End
+
+Program.Sub.Process_GUI.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	V.Local.iRow.Declare
+	V.Local.iC.Declare
+	V.Local.sReadRow.Declare
+	v.Local.sRet.Declare
+	v.Local.sSQL.Declare	
+	v.Local.sLine.Declare
+	v.local.sPart.Declare
+	v.local.sRev.Declare
+	v.local.sLoc.Declare
+	v.local.sDescription.Declare	
+	v.local.sBin.Declare
+	v.local.fQty_Apply.Declare
+	v.local.sClosed.Declare	
+	v.local.sSequence.Declare
+	v.Local.sBinRange.Declare
+	v.Local.sCaption.Declare
+	v.Local.sType.Declare
+	v.Local.sFilter.Declare
+	
+	f.Intrinsic.String.Build("Select Job,Suffix,Seq,Part,Locn from V_Job_Operations where Job = '{0}' and Suffix = '{1}'",v.Global.sJob,v.Global.sSuffix,v.Local.sSQL)
+	f.Intrinsic.Control.If(v.DataTable.Job.Exists)
+		f.Data.Datatable.Close("Job")
+	f.Intrinsic.Control.EndIf
+	f.Data.DataTable.CreateFromSQL("Job","conx",v.Local.sSQL,True)
+	f.Data.DataView.Create("Job","dvJob")
+	
+	'Scan AUX for apply qty and parts
+	f.Intrinsic.Control.If(v.DataTable.GUI.Exists)
+		f.Data.DataTable.Close("GUI")
+	f.Intrinsic.Control.EndIf
+	f.Data.DataTable.CreateFromString("GUI","","Line*!*Part*!*Loc*!*Description*!*Sequence*!*Bin*!*Brw*!*Qty_Apply*!*TimeStamp*!*UserID","String*!*String*!*String*!*String*!*String*!*String*!*String*!*Float*!*String*!*String","*!*","#$#",True)
+	f.Data.DataTable.DeleteRow("GUI",0)
+	f.Data.DataTable.AcceptChanges("GUI")
+	
+	F.Intrinsic.BDF.Load("AUX001","AUX001")
+	F.Intrinsic.BDF.Clone("AUX001","Clone")
+	F.Intrinsic.BDF.ReadRowCount("AUX001",V.Local.iRow)
+	F.Intrinsic.Math.Sub(V.Local.iRow,1,V.Local.iRow)
+	F.Intrinsic.Control.For(V.Local.iC,0,V.Local.iRow,1)	
+		'Read row and check for apply qty
+		F.Intrinsic.BDF.ReadRow("AUX001",V.Local.iC,V.Local.sReadRow)
+		F.Intrinsic.String.Split(V.Local.sReadRow,"|~|",V.Local.sReadRow)
+		'Get Type
+		v.Local.sType.Set(v.Local.sReadRow(1).Trim)
+		f.Intrinsic.Control.If(v.Local.sType,=,"M")
+			v.Local.sSequence.Set(v.Local.sReadRow(0).Trim)
+			f.Intrinsic.String.Build("Seq = '{0}'",v.Local.sSequence,v.Local.sFilter)
+			f.Data.DataView.SetFilter("Job","dvJob",v.Local.sFilter)
+			f.Intrinsic.Control.if(v.DataView.Job!dvJob.RowCount,>,0)
+				'Set the Part number, Location
+				v.Local.sPart.Set(v.DataView.Job!dvJob(0).Part!FieldValString)
+				v.Local.sLoc.Set(v.DataView.Job!dvJob(0).Locn!FieldValString)
+				f.Intrinsic.String.Build("Select Top 1 Bin from WIP_Bin where Job = '{0}' and Suffix = '{1}' and Sequence = '{2}' and Part = '{3}' and Location = '{4}' order by  Date_WipBin desc",v.Global.sJob,v.Global.sSuffix,v.Local.sSequence,v.Local.sPart,v.Local.sLoc,v.Local.sSQL)
+				f.ODBC.Connection!conx.ExecuteAndReturn(v.Local.sSQL,v.Local.sRet)				
+				v.Local.sReadRow(9).Set(v.Local.sRet)				
+			f.Intrinsic.Control.EndIf
+		f.Intrinsic.Control.EndIf
+		f.Intrinsic.String.Join(v.Local.sReadRow,"|~|",v.Local.sReadRow)
+		'Write new record
+		Function.Intrinsic.BDF.WriteRow("Clone",v.Local.sReadRow)
+		
+	F.Intrinsic.Control.Next(V.Local.iC)
+	
+	F.Intrinsic.BDF.Save("Clone","AUX001")	
+	f.Data.DataTable.Close("Job")
+	
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Subroutine called from:{6}{1}Error Occurred: {3}{1}Description: {4}{1}GAB Version: {5} column: {7}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,v.Ambient.SubroutineCalledFrom,v.Local.sColumns(v.Local.iCnt),V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry	
+Program.Sub.Process_GUI.End
+
+Program.Sub.Check_And_Create_Custom_Folder.Start
+f.Intrinsic.Control.Try
+	v.Local.sError.Declare
+	v.Local.sDir.Declare
+	v.Local.bEx.Declare
+	v.Local.sProjectDir.Declare
+	
+	'Custom folder for GS Mobile error
+	f.Intrinsic.String.Build("{0}\Custom\5694",V.Caller.GlobalDir,v.Local.sProjectDir)
+	f.Intrinsic.File.DirExists(v.Local.sProjectDir,v.Local.bEx)
+	f.Intrinsic.Control.If(v.Local.bEx)
+		f.Intrinsic.Control.ExitSub
+	f.Intrinsic.Control.EndIf
+	
+	'Check Custom folder
+	f.Intrinsic.String.Build("{0}\Custom",V.Caller.GlobalDir,v.Local.sDir)
+	f.Intrinsic.File.DirExists(v.Local.sDir,v.Local.bEx)
+	f.Intrinsic.Control.If(v.Local.bEx.Not)
+		f.Intrinsic.File.CreateDir(v.Local.sDir)
+	f.Intrinsic.Control.EndIf
+	f.Intrinsic.File.CreateDir(v.Local.sProjectDir)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.String.Build("Project: {0}{1}Subroutine: {2}{1}Subroutine called from:{6}{1}Error Occurred: {3}{1}Description: {4}{1}GAB Version: {5} column: {7}",V.Ambient.ScriptPath,V.Ambient.Newline,V.Ambient.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,v.Ambient.SubroutineCalledFrom,v.Local.sColumns(v.Local.iCnt),V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	f.Intrinsic.Control.CallSub("Unload")
+F.Intrinsic.Control.EndTry	
+
+Program.Sub.Check_And_Create_Custom_Folder.End
